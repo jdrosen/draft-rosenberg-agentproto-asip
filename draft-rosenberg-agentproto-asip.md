@@ -9,19 +9,19 @@ number:
 date:
 consensus: true
 v: 3
-area: AREA
-workgroup: WG Working Group
+area: "Applications and Real-Time"
+workgroup: "Agent Communication Protocols"
 keyword:
  - next generation
  - unicorn
  - AI-native
 venue:
-  group: WG
-  type: Working Group
-  mail: WG@example.com
-  arch: https://example.com/WG
-  github: USER/REPO
-  latest: https://example.com/LATEST
+  group: "Agent Communication Protocols"
+  type: "Working Group"
+  mail: "agentproto@ietf.org"
+  arch: "https://mailarchive.ietf.org/arch/browse/agentproto"
+  github: "jdrosen/draft-rosenberg-agentproto-asip"
+  latest: "https://jdrosen.github.io/draft-rosenberg-agentproto-asip/draft-rosenberg-agentproto-asip.html"
 
 author:
  -
