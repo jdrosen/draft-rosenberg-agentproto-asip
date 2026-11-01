@@ -4,11 +4,11 @@
 
 WG Working Group                                              Y. N. Here
 Internet-Draft                                    Your Organization Here
-Intended status: Informational                           1 November 2026
+Intended status: Standards Track                         1 November 2026
 Expires: 5 May 2027
 
 
-                           TODO - Your title
+            The Agentic Session Initiation Protocol (A-SIP)
                   draft-todo-yourname-protocol-latest
 
 Abstract
