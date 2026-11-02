@@ -244,14 +244,40 @@ The log contains all input and output, including progress signaling and informat
 
 Polling to retrieve output is clearly suboptimal. A-SIP specifies rate limiting negotiation, allowing the server to control pacing. If clients want responses faster, they need to make use of the MOQT transport.
 
+## Pausing, Resuming and Reconnecting
 
-# Web Resource Model
+A-SIP allows an agentic dialog to be paused. A paused agentic dialog means that the agent is no longer running inference, and is awaiting further input which can come at another time, potentially a long time from now.
 
-## The Agent Resource
+To pause a dialog, there is a pause command ":pause" issued as a POST against the agentic dialog resource:
+
+~~~
+POST https://example.com/agents/booking/agentic-dialogs/01a198c7-ab2f-753f-9a6a-67b204b16994:pause
+~~~
+
+This operation allows any inference in-progress to complete, and the results of it returned over the existing connection. Once done, the state of the dialog context moves to "PAUSED", and this state change is conveyed over the MOQT notification topic. At that point, the client can close the connection entirely, ending the MOQT session and the HTTP connection in which it resides.
+
+If the client abruptly ends the HTTP/3 connection, it has the same effect as an explicit pause operation. The AI Agent will complete inference in progress, and add the results to the log. Without an active connection, the results cannot be communicated to the principal. However, it can retrieve them via the log when it resumes.
+
+To resume, the client need only create a new connection by initiating an HTTP POST operation like this:
+
+~~~
+POST https://example.com/agents/booking/agentic-dialogs/01a198c7-ab2f-753f-9a6a-67b204b16994:resume
+~~~
+
+The response contains the current dialog context, which contains the necessary information (e.g., track names) to create a new MOQ connection (assuming muxing is used). Typically the same track names are used across pauses and resumptions - and across reconnections. This means that, using MOQT subscriptions that reference the last group that the client received, it can "catch-up" via MOQT. If MOQT is not used, querying the log with query filters accomplishes the same goal. This works independent of whether the MOQT session is multiplexed over the HTTP connection or accessed via a separate connection.
+
+The server will only allow resumption from the same principal identified in th
+
+The resume command also works against an active agentic dialog, making this operation idempotent.
+
+OPEN ISSUE - there is a subtle distinction between "stop running inference" and "i'm not here anymore to get the results, so stop once you get to the point where you need my input". Do we need to support both modes? And which one is implied by a connection termination?
+
+
+# The Agent Resource
 
 The agent resource is the root of the resource hierarchy. The URI can be any valid HTTPS URI. The means by which the principal discovers this URI is outside of the scope of this specification.
 
-### Agent Capabilities Resource
+## Agent Capabilities Resource
 
 A GET upon the agent resource returns the agent capabilities resource. This is a JSON document with the following fields:
 
@@ -262,7 +288,7 @@ A GET upon the agent resource returns the agent capabilities resource. This is a
 * chat: if chat - which includes a range of media types exchanged in an async, turn-by-turn fashion - is supported, the chat capability object is included. If it is not supported, it is omitted.
 
 
-#### Voice Capabilities
+### Voice Capabilities
 
 The voice capabilities object in the JSON includes the following fields:
 
@@ -272,7 +298,7 @@ The voice capabilities object in the JSON includes the following fields:
 
 * muxed: A boolean (optional). If true, it indicates that the agent supports the ability to multiplex the MOQT session over the same HTTP/3 connection used for the web API. The default is true.
 
-#### Video Capabilities
+### Video Capabilities
 
 The video capabilities object in the JSON includes the following fields:
 
@@ -285,7 +311,7 @@ The video capabilities object in the JSON includes the following fields:
 
 OPEN ISSUE - other video codec capabilities we need to signal?
 
-#### Chat Capabilities
+### Chat Capabilities
 
 The chat capabilities object in the JSON includes the following fields:
 
@@ -302,7 +328,7 @@ Along similar lines, the chat capabilities document SHOULD NOT list any applicat
 
 This means that a traditional, text-based LLM that has no multimodal support, only needs to declare support for "text/plain" in both directions.
 
-### Creating an Agentic Dialog
+## Creating an Agentic Dialog
 
 To create an agentic dialog, the client performs a POST against the agent resource. The body MUST contain an agentic dialog creation request.
 
@@ -335,9 +361,17 @@ Upon receipt of this API call, the server MUST authorize the request using OAUth
 
 It is worthwhile to note that the negotiation technique defined here differs from the offer/answer mechanism specific for SIP in [RFC3264]. That mechanism proved problematic over time, since it mixed relatively static capability, with run-time configuration, with connection information. In A-SIP, these are cleanly separated.
 
-The response from the server contains a dialog context object. This object has the following fields:
+The response from the server contains a dialog context object. This object is defined in the next section.
 
-adid: The agentic dialog ID. This MUST be a type 7 UUID, and be unique in space and time.
+
+
+# Dialog Context Resource
+
+The dialog context resource is addressed by an HTTPS URI, and it represnets the current state of the agentic dialog. Note that this does not include the log per se, but it does include a timestamp which represents the most recent log entry.
+
+The dialog context object has the following fields:
+
+* adid: The agentic dialog ID. This MUST be a type 7 UUID, and be unique in space and time.
 
 * uri: The URI that identifies this agentic dialog
 
@@ -349,7 +383,78 @@ adid: The agentic dialog ID. This MUST be a type 7 UUID, and be unique in space 
 
 * chat: Present if the agentic dialog incldues chat.
 
-The voice and video objects have a similar structure.
+* state: The current state of the agentic dialog. It is one of ACTIVE, PAUSED, or COMPLETED.
+
+* latest-log: A timestamp representing the most recent entry in the log.
+
+The voice and video objects have a similar structure:
+
+* agent-to-principal: This describes the session between the agent and principal
+
+* principal-to-agent: This desribes the session between the principal and agent
+
+Both of these also have the same structure, as they contain:
+
+* codec: The codec in use
+
+* moqt: Boolean, indicating whether moqt is in use
+
+* muxed: Boolean, indicating whether the moqt session is muxed over the HTTP connection or separate
+
+* track: The full name of the track
+
+* uri: The MOQT URI to use for the connection; only present if the muxed field is false.
+
+
+An example of a dialog context object for voice might look like this:
+
+~~~
+{
+  "adid": "01a198c7-ab2f-753f-9a6a-67b204b16994",
+  "uri": "https://example.com/agents/booking/agentic-dialogs/01a198c7-ab2f-753f-9a6a-67b204b16994",
+  "state": "ACTIVE",
+  "latest-log": "2026-11-02T14:23:07.512Z",
+  "notifications": {
+    "uri": "https://relay.example.net/moq",
+    "track": {
+      "namespace": [
+        "example.com",
+        "booking",
+        "01a198c7-ab2f-753f-9a6a-67b204b16994"
+      ],
+      "name": "notifications"
+    }
+  },
+  "voice": {
+    "principal-to-agent": {
+      "codec": "opus",
+      "moqt": true,
+      "muxed": true,
+      "track": {
+        "namespace": [
+          "example.com",
+          "booking",
+          "01a198c7-ab2f-753f-9a6a-67b204b16994"
+        ],
+        "name": "voice-in"
+      }
+    },
+    "agent-to-principal": {
+      "codec": "opus",
+      "moqt": true,
+      "muxed": true,
+      "track": {
+        "namespace": [
+          "example.com",
+          "booking",
+          "01a198c7-ab2f-753f-9a6a-67b204b16994"
+        ],
+        "name": "voice-out"
+      }
+    }
+  }
+}
+~~~
 
 
 
@@ -358,8 +463,9 @@ The voice and video objects have a similar structure.
 
 
 
+# AI Authorship Disclosures
 
-
+This document was written entirely by hand, except for the example JSON document and the protocol stack diagram, which were generated with genAI assistance.
 
 
 # Security Considerations {#security}
